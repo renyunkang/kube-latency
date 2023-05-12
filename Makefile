@@ -1,8 +1,8 @@
-ACCOUNT=simonswine
+ACCOUNT=rykren
 APP_NAME=kube-latency
 
 PACKAGE_NAME=github.com/${ACCOUNT}/${APP_NAME}
-GO_VERSION=1.8
+GO_VERSION=1.19
 
 DOCKER_IMAGE=${ACCOUNT}/${APP_NAME}
 
@@ -51,7 +51,7 @@ docker_%:
 	docker rm $(CONTAINER_ID)
 
 image: docker_all version
-	docker build --build-arg VCS_REF=$(GIT_COMMIT) -t $(ACCOUNT)/$(APP_NAME):latest .
+	docker build --load --build-arg VCS_REF=$(GIT_COMMIT) -t $(ACCOUNT)/$(APP_NAME):latest .
 	
 push: image
 	docker push $(ACCOUNT)/$(APP_NAME):latest

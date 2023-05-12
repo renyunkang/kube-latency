@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -11,15 +12,15 @@ import (
 	"os"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/dustin/randbo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
 	"github.com/tcnksm/go-httpstat"
+	kubeapi_v1 "k8s.io/api/core/v1"
 	kubemeta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
-	kubeapi_v1 "k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -33,7 +34,7 @@ type App struct {
 	kubeNamespace string
 	kubePodName   string
 	myService     *kubeapi_v1.Service
-	zonePerNode   map[string]string
+	// zonePerNode   map[string]string
 
 	metricDownloadProbeSize *prometheus.GaugeVec
 	metricDownloadDurations *prometheus.SummaryVec
@@ -44,14 +45,13 @@ type Labels struct {
 	PodName  string
 	PodIP    net.IP
 	NodeName string
-	Zone     string
 }
 
 func LabelsKeys(prefix string) []string {
 	return []string{
 		prefix + "pod_name",
 		prefix + "pod_ip",
-		prefix + "zone",
+		// prefix + "zone",
 		prefix + "node_name",
 	}
 }
@@ -59,7 +59,6 @@ func (l *Labels) Values() []string {
 	return []string{
 		l.PodName,
 		l.PodIP.String(),
-		l.Zone,
 		l.NodeName,
 	}
 }
@@ -93,7 +92,7 @@ func NewApp() *App {
 			},
 			labels,
 		),
-		zonePerNode: map[string]string{},
+		// zonePerNode: map[string]string{},
 	}
 }
 
@@ -108,29 +107,11 @@ func (a *App) handleData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// get zone of node and cache in hashmap, don't cache not found nodes
-func (a *App) getZoneForNode(nodeName string) string {
-	if zone, ok := a.zonePerNode[nodeName]; ok {
-		return zone
-	}
-
-	node, err := a.kubeClient.Nodes().Get(nodeName, kubemeta_v1.GetOptions{})
-	if err != nil {
-		log.Warnf("error getting node %s: %s", nodeName, err)
-		return ""
-	}
-
-	zone, _ := node.Labels[kubemeta_v1.LabelZoneFailureDomain]
-	a.zonePerNode[nodeName] = zone
-
-	return zone
-}
-
 func (a *App) testLoop() {
 	for {
 		// get latest pod list
 		var serviceLabels labels.Set = a.myService.Spec.Selector
-		podsList, err := a.kubeClient.Pods(a.kubeNamespace).List(kubemeta_v1.ListOptions{
+		podsList, err := a.kubeClient.CoreV1().Pods(a.kubeNamespace).List(context.Background(), kubemeta_v1.ListOptions{
 			LabelSelector: serviceLabels.AsSelector().String(),
 		})
 		if err != nil {
@@ -141,13 +122,14 @@ func (a *App) testLoop() {
 		var source *Labels = nil
 
 		// build labels per pod
+		log.Infof("pods.length is %d\n", len(podsList.Items))
 		for _, pod := range podsList.Items {
+			log.Infof("pod.name is %s\n", pod.Name)
 			podIP := net.ParseIP(pod.Status.PodIP)
 			if podIP == nil {
 				continue
 			}
 			l := &Labels{
-				Zone:     a.getZoneForNode(pod.Spec.NodeName),
 				PodName:  pod.Name,
 				PodIP:    podIP,
 				NodeName: pod.Spec.NodeName,
@@ -180,20 +162,20 @@ func (a *App) testLoop() {
 
 func (a *App) getPodLabels(podName string) (*Labels, error) {
 	// get my pod object
-	pod, err := a.kubeClient.Pods(a.kubeNamespace).Get(podName, kubemeta_v1.GetOptions{})
+	pod, err := a.kubeClient.CoreV1().Pods(a.kubeNamespace).Get(context.Background(), podName, kubemeta_v1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("unable to get pod %s/%s: %s", a.kubeNamespace, a.kubePodName, err)
 	}
 
 	// get my node object
-	node, err := a.kubeClient.Nodes().Get(pod.Spec.NodeName, kubemeta_v1.GetOptions{})
+	node, err := a.kubeClient.CoreV1().Nodes().Get(context.Background(), pod.Spec.NodeName, kubemeta_v1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("unable to get node %s: %s", pod.Spec.NodeName, err)
 	}
 
 	ip := net.ParseIP(pod.Status.PodIP)
 	if ip == nil {
-		return nil, fmt.Errorf("error parsing podIP %s: %s", pod.Status.PodIP)
+		return nil, fmt.Errorf("error parsing podIP %s", pod.Status.PodIP)
 	}
 
 	return &Labels{
@@ -235,7 +217,7 @@ func (a *App) Run() {
 	}
 
 	// get my service
-	a.myService, err = a.kubeClient.Services(a.kubeNamespace).Get(*serviceName, kubemeta_v1.GetOptions{})
+	a.myService, err = a.kubeClient.CoreV1().Services(a.kubeNamespace).Get(context.Background(), *serviceName, kubemeta_v1.GetOptions{})
 	if err != nil {
 		log.Fatalf("failed to get my service %s/%s: %s", a.kubeNamespace, *serviceName, err)
 	}
