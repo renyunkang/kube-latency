@@ -17,7 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"github.com/tcnksm/go-httpstat"
-	kubeapi_v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	kubemeta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -33,7 +33,7 @@ type App struct {
 	kubeClient    *kubernetes.Clientset
 	kubeNamespace string
 	kubePodName   string
-	myService     *kubeapi_v1.Service
+	myService     *corev1.Service
 	// zonePerNode   map[string]string
 
 	metricDownloadProbeSize *prometheus.GaugeVec
@@ -45,6 +45,7 @@ type Labels struct {
 	PodName  string
 	PodIP    net.IP
 	NodeName string
+	// Zone     string
 }
 
 func LabelsKeys(prefix string) []string {
@@ -107,6 +108,24 @@ func (a *App) handleData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// // get zone of node and cache in hashmap, don't cache not found nodes
+// func (a *App) getZoneForNode(nodeName string) string {
+// 	if zone, ok := a.zonePerNode[nodeName]; ok {
+// 		return zone
+// 	}
+
+// 	node, err := a.kubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, kubemeta_v1.GetOptions{})
+// 	if err != nil {
+// 		log.Warnf("error getting node %s: %s", nodeName, err)
+// 		return ""
+// 	}
+
+// 	zone, _ := node.Labels[corev1.LabelHostname]
+// 	a.zonePerNode[nodeName] = zone
+
+// 	return zone
+// }
+
 func (a *App) testLoop() {
 	for {
 		// get latest pod list
@@ -130,6 +149,7 @@ func (a *App) testLoop() {
 				continue
 			}
 			l := &Labels{
+				// Zone:     a.getZoneForNode(pod.Spec.NodeName),
 				PodName:  pod.Name,
 				PodIP:    podIP,
 				NodeName: pod.Spec.NodeName,
@@ -182,6 +202,7 @@ func (a *App) getPodLabels(podName string) (*Labels, error) {
 		PodIP:    ip,
 		PodName:  podName,
 		NodeName: node.Name,
+		// Zone:  "",
 	}, nil
 }
 
